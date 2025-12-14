@@ -72,6 +72,10 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    // Set takeoff altitude
+    action.set_takeoff_altitude(1.75f);
+    const auto max_wait = seconds(20);        // safety timeout
+    auto start = std::chrono::steady_clock::now();
     // Takeoff
     std::cout << "Taking off...\n";
     const auto takeoff_result = action.takeoff();
@@ -79,107 +83,34 @@ int main(int argc, char** argv)
         std::cerr << "Takeoff failed: " << takeoff_result << '\n';
         return 1;
     }
-
-    // Wait until altitude > 1 m
-    std::cout << "Waiting until altitude > 1.0 m...\n";
+    // Wait until we reach ~1.7 m
     while (true) {
-        Telemetry::Position pos = telemetry.position();
-        std::cout << "Current altitude: " << pos.relative_altitude_m << " m\n";
+        const auto pos = telemetry.position();
+        std::cout << "Current altitude: "
+                << pos.relative_altitude_m << " m\n";
 
-        if (pos.relative_altitude_m > 1.0f) {
-            std::cout << "Altitude above 1.0 m, start rotate + climb.\n";
+        if (pos.relative_altitude_m >= 1.7f) {
+            std::cout << "Altitude above 1.7 m, Hi, Monalisa and Lenna!\n";
             break;
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        sleep_for(seconds(1));
     }
 
-    // Send a neutral (zero) velocity setpoint before starting Offboard
-    {
-        Offboard::VelocityBodyYawspeed stay{};
-        stay.forward_m_s = 0.0f;
-        stay.right_m_s   = 0.0f;
-        stay.down_m_s    = 0.0f;
-        stay.yawspeed_deg_s = 0.0f;
-
-        const auto set_result = offboard.set_velocity_body(stay);
-        if (set_result != Offboard::Result::Success) {
-            std::cerr << "Offboard set_velocity_body (stay) failed: "
-                      << set_result << '\n';
-            return 1;
-        }
-    }
-
-    std::cout << "Starting Offboard...\n";
-    auto offboard_result = offboard.start();
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard start failed: " << offboard_result << '\n';
-        return 1;
-    }
-
-    // Velocity setpoint for rotating while climbing:
-    //   down_m_s < 0 => climb
-    //   yawspeed_deg_s > 0 => clockwise (viewed from above)
-    const float climb_speed_m_s   = 0.5f;  // climb at 0.5 m/s
-    const float yaw_rate_deg_s    = 45.0f; // rotate at 45 deg/s
-    const float target_altitude_m = 5.0f;
-
-    Offboard::VelocityBodyYawspeed rotate_climb{};
-    rotate_climb.forward_m_s = 0.0f;
-    rotate_climb.right_m_s   = 0.0f;
-    rotate_climb.down_m_s    = -climb_speed_m_s;
-    rotate_climb.yawspeed_deg_s = yaw_rate_deg_s;
-
-    offboard_result = offboard.set_velocity_body(rotate_climb);
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard set_velocity_body (rotate_climb) failed: "
-                  << offboard_result << '\n';
-        return 1;
-    }
-
-    std::cout << "Rotating while climbing to " << target_altitude_m << " m...\n";
-
-    // Keep rotating and climbing until altitude >= 5 m
+    int hover_count = 0;
     while (true) {
-        Telemetry::Position pos = telemetry.position();
-        const float alt = pos.relative_altitude_m;
-
-        std::cout << "[Rotate+Climb] Alt: " << alt << " m\n";
-
-        if (alt >= target_altitude_m) {
-            std::cout << "Reached target altitude (" << target_altitude_m
-                      << " m). Stop climb & rotation.\n";
+        // Optional: avoid infinite wait in case something is wrong
+        auto now = std::chrono::steady_clock::now();
+        int duration = std::chrono::duration_cast<std::chrono::seconds>(now - start).count();
+        std::cout << "Timeout waiting for hover count " << duration << "\n";
+                
+        if (now - start > max_wait) {
             break;
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    }
-
-    // Stop rotating and climbing, switch to hover
-    Offboard::VelocityBodyYawspeed hover{};
-    hover.forward_m_s = 0.0f;
-    hover.right_m_s   = 0.0f;
-    hover.down_m_s    = 0.0f;
-    hover.yawspeed_deg_s = 0.0f;
-
-    offboard_result = offboard.set_velocity_body(hover);
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard set_velocity_body (hover) failed: "
-                  << offboard_result << '\n';
-        return 1;
+        }  
+        sleep_for(seconds(1));
     }
 
     // Hover for 5 seconds
-    std::cout << "Hovering for 5 seconds...\n";
-    sleep_for(seconds(5));
-
-    // Stop Offboard
-    std::cout << "Stopping Offboard...\n";
-    offboard_result = offboard.stop();
-    if (offboard_result != Offboard::Result::Success) {
-        std::cerr << "Offboard stop failed: " << offboard_result << '\n';
-        return 1;
-    }
+    // std::cout << "Hovering for 5 seconds...\n";
 
     // Land
     std::cout << "Landing...\n";
